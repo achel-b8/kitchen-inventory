@@ -4,11 +4,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import * as z from "zod/v4";
 import { writeInventory } from "../lib/github.js";
+import { InventoryDocumentSchema, JstIsoDateTimeSchema } from "../lib/inventory-schema.js";
 
 const writeInventoryInputSchema = {
-  inventory: z.unknown().describe("更新後の inventory.json 全体。サーバー側で厳密に検証されます。"),
-  expected_updated_at: z.unknown().optional().describe("読み取り時点の updated_at。指定時は競合検出に使います。"),
-  commit_message: z.unknown().optional().describe("GitHub に作成するコミットメッセージ。未指定時は Update inventory。")
+  inventory: InventoryDocumentSchema.describe("更新後の inventory.json 全体。サーバー側で厳密に検証されます。"),
+  expected_updated_at: JstIsoDateTimeSchema.optional().describe("読み取り時点の updated_at。指定時は競合検出に使います。"),
+  commit_message: z.string().optional().describe("GitHub に作成するコミットメッセージ。未指定時は Update inventory。")
 };
 
 type HeaderValue = string | string[] | undefined;

@@ -15,6 +15,15 @@ describe("MCP server", () => {
       const tools = await client.listTools();
 
       expect(tools.tools.map((tool) => tool.name)).toEqual(["write_inventory"]);
+      expect(tools.tools[0]?.inputSchema.properties?.inventory).toMatchObject({
+        type: "object"
+      });
+      expect(tools.tools[0]?.inputSchema.properties?.expected_updated_at).toMatchObject({
+        type: "string"
+      });
+      expect(tools.tools[0]?.inputSchema.properties?.commit_message).toMatchObject({
+        type: "string"
+      });
     } finally {
       await client.close();
       await server.close();

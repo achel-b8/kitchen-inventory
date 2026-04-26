@@ -229,12 +229,13 @@ GitHub への更新は GitHub Contents API を使う。
 
 Vercel 環境変数:
 
+- `MCP_API_KEY`: MCP エンドポイントを呼び出すための長いランダム API キー
 - `GITHUB_TOKEN`: fine-grained personal access token
 - `GITHUB_OWNER`: `achel-b8`
 - `GITHUB_REPO`: `kitchen-inventory`
 - `GITHUB_BRANCH`: `main`
 
-`GITHUB_TOKEN` は対象リポジトリの Contents read/write 権限だけを持つ fine-grained token を推奨する。
+`MCP_API_KEY` と `GITHUB_TOKEN` は secret として扱う。`GITHUB_TOKEN` は対象リポジトリの Contents read/write 権限だけを持つ fine-grained token を推奨する。
 
 ## Vercel 実装方針
 
@@ -268,15 +269,16 @@ Vercel 環境変数:
 
 ## セキュリティ方針
 
-MCP サーバーは GitHub 書き込み権限を持つため、公開 URL の扱いに注意する。
+MCP サーバーは GitHub 書き込み権限を持つため、公開 URL と API キーの扱いに注意する。
 
-MVP の最小構成では ChatGPT Developer mode から接続しやすいように No Authentication で開始できるが、これは個人検証限定とする。本運用では OAuth など ChatGPT 側が扱える認証方式を追加する。
+MCP エンドポイントは `MCP_API_KEY` による簡易認証を必須にする。API キーは `Authorization: Bearer <MCP_API_KEY>`、`X-API-Key: <MCP_API_KEY>`、または URL しか設定できないクライアント向けの `?api_key=<MCP_API_KEY>` で渡す。`MCP_API_KEY` が未設定の場合は公開状態で動かさず、設定エラーを返す。
 
 必須ルール:
 
 - GitHub token をリポジトリにコミットしない。
 - Vercel 環境変数にだけ secret を保存する。
 - token は対象リポジトリ限定、Contents read/write 限定にする。
+- `MCP_API_KEY` は長いランダム値にし、URL で渡す場合は共有範囲を最小にする。
 - ツール説明に secret や token を含めない。
 - 書き込みツールは ChatGPT 側で確認してから実行する。
 - `inventory.json` 以外のファイルを書き換えない。
@@ -286,6 +288,7 @@ MVP の最小構成では ChatGPT Developer mode から接続しやすいよう�
 - `inventory.json` が仕様通りの初期構造で存在する。
 - Vercel がリポジトリを読み込み、ビルドできる。
 - `/api/mcp` が MCP サーバーとして応答する。
+- API キーなしの `/api/mcp` は拒否される。
 - ChatGPT Developer mode から MCP を追加できる。
 - `write_inventory` だけが公開される。
 - `write_inventory` に正しい JSON を渡すと `inventory.json` が GitHub 上で更新される。

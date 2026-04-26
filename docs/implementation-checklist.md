@@ -124,18 +124,21 @@
 
 ## 11. セキュリティを確認する
 
+- [ ] `MCP_API_KEY` がファイルに書かれていない。
 - [ ] `GITHUB_TOKEN` がファイルに書かれていない。
 - [ ] `.env` がある場合は `.gitignore` されている。
+- [ ] API キーなしの `/api/mcp` が拒否される。
 - [ ] GitHub token が対象リポジトリだけに限定されている。
 - [ ] GitHub token の権限が Contents read/write に限定されている。
 - [ ] MCP tool の説明や戻り値に secret が含まれない。
 - [ ] エラーメッセージに GitHub token や request header が含まれない。
-- [ ] 本運用前に OAuth など ChatGPT 側で扱える認証方式を検討する。
+- [ ] URL で API キーを渡す場合は共有範囲を最小にする。
 
 ## 12. GitHub token と Vercel 環境変数を設定する
 
 ここから secret を扱う。token の値はリポジトリに保存しない。
 
+- [ ] 長いランダム値の `MCP_API_KEY` を作成する。
 - [ ] GitHub で fine-grained personal access token を作成する。
 - [ ] token の対象 repository を `achel-b8/kitchen-inventory` に限定する。
 - [ ] token の権限を Contents read/write に限定する。
@@ -143,6 +146,7 @@
 - [ ] Framework Preset は Other または自動検出にする。
 - [ ] Build Command を設定する。
 - [ ] Output Directory は不要にする。
+- [ ] `MCP_API_KEY` を Vercel Environment Variables に設定する。
 - [ ] `GITHUB_TOKEN` を Vercel Environment Variables に設定する。
 - [ ] `GITHUB_OWNER=achel-b8` を設定する。
 - [ ] `GITHUB_REPO=kitchen-inventory` を設定する。

@@ -203,6 +203,12 @@ MCP エンドポイント:
 https://<vercel-project>.vercel.app/api/mcp
 ```
 
+認証は `MCP_API_KEY` で行います。ヘッダーを設定できる場合は `Authorization: Bearer <MCP_API_KEY>` または `X-API-Key: <MCP_API_KEY>` を送ります。URL しか設定できない環境では次を使います。
+
+```text
+https://<vercel-project>.vercel.app/api/mcp?api_key=<MCP_API_KEY>
+```
+
 ChatGPT Developer mode で Custom MCP / App として追加し、利用する会話で Developer mode tool からこの MCP を選びます。
 
 書き込みアクションの実行前には、ChatGPT が表示する tool payload を確認します。特に次を確認してください。

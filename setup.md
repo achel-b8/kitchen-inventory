@@ -22,22 +22,29 @@
 Production と Preview の両方に次を設定します。
 
 ```text
+MCP_API_KEY=<long random API key>
 GITHUB_TOKEN=<fine-grained personal access token>
 GITHUB_OWNER=achel-b8
 GITHUB_REPO=kitchen-inventory
 GITHUB_BRANCH=main
 ```
 
-`GITHUB_TOKEN` は secret として扱い、ログ、ドキュメント、コミットに含めないでください。
+`MCP_API_KEY` と `GITHUB_TOKEN` は secret として扱い、ログ、ドキュメント、コミットに含めないでください。`MCP_API_KEY` が未設定の場合、MCP エンドポイントは公開状態では動かず設定エラーを返します。
 
 ## 4. ChatGPT Developer mode で接続する
 
 1. ChatGPT の Developer mode を有効化します。
 2. Apps / Connectors から Custom MCP / App を作成します。
-3. MCP URL に次を設定します。
+3. MCP URL に次を設定します。クライアントが任意ヘッダーを設定できる場合は URL だけを登録し、`Authorization: Bearer <MCP_API_KEY>` または `X-API-Key: <MCP_API_KEY>` を送信します。
 
 ```text
 https://<vercel-project>.vercel.app/api/mcp
+```
+
+ヘッダーを設定できず URL だけを登録する環境では、次の形式を使います。
+
+```text
+https://<vercel-project>.vercel.app/api/mcp?api_key=<MCP_API_KEY>
 ```
 
 4. tool list を更新し、`write_inventory` だけが表示されることを確認します。
@@ -70,7 +77,11 @@ secret が未設定の状態では、`write_inventory` は `configuration_error`
 
 ### `configuration_error`
 
-Vercel の `GITHUB_TOKEN`、`GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` を確認します。Production と Preview のどちらに設定したかも確認してください。
+Vercel の `MCP_API_KEY`、`GITHUB_TOKEN`、`GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` を確認します。Production と Preview のどちらに設定したかも確認してください。
+
+### `unauthorized`
+
+MCP リクエストに API キーが含まれていない、または `MCP_API_KEY` と一致していません。`Authorization: Bearer <MCP_API_KEY>`、`X-API-Key: <MCP_API_KEY>`、または `?api_key=<MCP_API_KEY>` のいずれかで渡してください。
 
 ### `conflict`
 

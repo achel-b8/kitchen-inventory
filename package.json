@@ -1,0 +1,24 @@
+{
+  "name": "kitchen-inventory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "validate:inventory": "vitest run tests/inventory-schema.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@vercel/node": "^5.7.13",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}

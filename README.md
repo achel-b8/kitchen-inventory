@@ -96,6 +96,7 @@ npm run validate:inventory
 
 ## 関連ドキュメント
 
+- `docs/README.md`: ドキュメント全体の案内
+- `docs/specification.md`: 現在の実装リファレンス
+- `docs/usage.md`: 在庫更新時の運用ガイド
 - `setup.md`: Vercel と Custom MCP の詳細なセットアップ手順
-- `docs/usage.md`: 在庫更新時の運用メモ
-- `docs/specification.md`: データ構造と MCP 仕様

@@ -1,20 +1,17 @@
-# 使用書
+# 運用ガイド
 
-## 概要
+この文書は、現在の実装を使って `inventory.json` を読む、編集する、MCP で書き込むための運用手順をまとめる。
 
-このリポジトリは、キッチン食材の在庫データを `inventory.json` に保存するためのものです。
+## 基本方針
 
-AI エージェントは次の流れで在庫を更新します。
+- 在庫の正本はリポジトリ直下の `inventory.json`。
+- 読み取りは GitHub コネクタ、GitHub UI、またはリポジトリのファイル参照で行う。
+- 書き込みは Custom MCP の `write_inventory` だけで行う。
+- MCP は読み取りツールを公開していない。
+- `write_inventory` には差分ではなく、更新後の `inventory.json` 全体を渡す。
+- 書き込み前に `expected_updated_at` を指定し、読み取り後の競合更新を検出する。
 
-1. ChatGPT の GitHub コネクタなどで `inventory.json` を読む。
-2. 在庫変更後の JSON 全体を作る。
-3. Custom MCP の `write_inventory` ツールを呼び出す。
-4. ChatGPT の書き込み確認画面で payload を確認して実行する。
-5. GitHub 上の `inventory.json` がコミットされる。
-
-MCP は読み取りツールを提供しません。読み取りは GitHub コネクタ、書き込みは Custom MCP という役割分担にします。
-
-## 在庫ファイルの読み方
+## 在庫を読む
 
 対象ファイル:
 
@@ -22,29 +19,14 @@ MCP は読み取りツールを提供しません。読み取りは GitHub コ�
 inventory.json
 ```
 
-基本構造:
-
-```json
-{
-  "schema_version": 1,
-  "updated_at": "2026-04-26T22:00:00+09:00",
-  "inventory": {
-    "生鮮": [],
-    "調味料": [],
-    "乾物": [],
-    "冷凍庫": []
-  }
-}
-```
-
-分類は次の4つです。
+分類は次の4つだけ。
 
 - `生鮮`
 - `調味料`
 - `乾物`
 - `冷凍庫`
 
-商品は次の形式です。
+商品レコードの形:
 
 ```json
 {
@@ -55,69 +37,35 @@ inventory.json
 }
 ```
 
-`商品名` と `追加日` は必須です。`数` と `単位` は任意です。`単位` を指定する場合は `数` も指定します。
+`商品名` と `追加日` は必須。`数` と `単位` は任意。ただし、`単位` を入れる場合は `数` も必要。
 
 ## 在庫を追加する
 
-例: 卵を10個追加する。
+同一レコードは、分類、`商品名`、`追加日`、`単位` の組み合わせで判定する。同じ組み合わせがすでにある場合はレコードを増やさず、既存レコードの `数` に加算する。
 
-更新前:
-
-```json
-{
-  "schema_version": 1,
-  "updated_at": "2026-04-26T21:30:00+09:00",
-  "inventory": {
-    "生鮮": [],
-    "調味料": [],
-    "乾物": [],
-    "冷凍庫": []
-  }
-}
-```
-
-MCP に渡す内容:
+例: 生鮮に卵10個を追加する。
 
 ```json
 {
-  "inventory": {
-    "schema_version": 1,
-    "updated_at": "2026-04-26T21:30:00+09:00",
-    "inventory": {
-      "生鮮": [
-        {
-          "商品名": "卵",
-          "追加日": "2026-04-26",
-          "数": 10,
-          "単位": "個"
-        }
-      ],
-      "調味料": [],
-      "乾物": [],
-      "冷凍庫": []
-    }
-  },
-  "expected_updated_at": "2026-04-26T21:30:00+09:00",
-  "commit_message": "卵を在庫に追加"
-}
-```
-
-同じ分類、同じ商品名、同じ追加日、同じ単位のレコードがすでにある場合は、新しいレコードを増やさず `数` を加算します。
-
-重量で管理する場合:
-
-```json
-{
-  "商品名": "和牛切り落とし",
+  "商品名": "卵",
   "追加日": "2026-04-26",
-  "数": 80,
-  "単位": "g"
+  "数": 10,
+  "単位": "個"
+}
+```
+
+数量を管理しない場合は `数` と `単位` を省略できる。
+
+```json
+{
+  "商品名": "薄口しょうゆ",
+  "追加日": "2026-04-26"
 }
 ```
 
 ## 在庫を消費する
 
-例: 卵を2個使う。
+`数` がある商品を消費する場合は、同じ `単位` の数量から差し引く。
 
 更新前:
 
@@ -130,7 +78,7 @@ MCP に渡す内容:
 }
 ```
 
-更新後:
+2個使った後:
 
 ```json
 {
@@ -141,53 +89,99 @@ MCP に渡す内容:
 }
 ```
 
-`数` が 0 になった場合、その商品レコードは削除します。
+`数` が 0 になったレコードは削除する。`数` がない商品は数量を減らせないため、使い切ったことが明確な場合だけレコードを削除する。
 
-## 数量不明の商品を扱う
+## MCP で書き込む
 
-数量を管理しない商品は `数` と `単位` を省略できます。
+MCP endpoint:
+
+```text
+https://<vercel-project>.vercel.app/api/mcp
+```
+
+認証:
+
+```text
+Authorization: Bearer <MCP_API_KEY>
+```
+
+または:
+
+```text
+X-API-Key: <MCP_API_KEY>
+```
+
+ヘッダーを設定できないクライアントでは、URL query でも渡せる。
+
+```text
+https://<vercel-project>.vercel.app/api/mcp?api_key=<MCP_API_KEY>
+```
+
+`write_inventory` に渡す payload:
 
 ```json
 {
-  "商品名": "醤油",
-  "追加日": "2026-04-26"
+  "inventory": {
+    "schema_version": 1,
+    "updated_at": "2026-04-27T00:20:57+09:00",
+    "inventory": {
+      "生鮮": [],
+      "調味料": [],
+      "乾物": [],
+      "冷凍庫": []
+    }
+  },
+  "expected_updated_at": "2026-04-27T00:20:57+09:00",
+  "commit_message": "在庫を更新"
 }
 ```
 
-`数` がない商品は、消費しても自動的に数量を減らせません。使い切ったことが明確な場合だけ、レコードを削除します。
+注意点:
 
-## 更新時の注意
+- `inventory` には更新後の JSON 全体を入れる。
+- `updated_at` は読み取り時点の値のままでよい。サーバー側で現在時刻に差し替えられる。
+- `expected_updated_at` には読み取り時点の `updated_at` を入れる。
+- `commit_message` は変更内容が分かる文にする。未指定時は `Update inventory`。
 
-- `inventory` 直下の4分類は必ずすべて残します。
-- 分類名を増やしたり変更したりしません。
-- `商品名` は空文字にしません。
-- `追加日` は `YYYY-MM-DD` にします。
-- `数` は 0 以上にします。
-- `単位` を入れる場合は空文字にせず、対応する `数` も入れます。
-- 更新対象は `inventory.json` だけです。
-- MCP に渡す前に JSON 全体が壊れていないことを確認します。
+成功時は commit SHA、GitHub URL、サーバー側で更新された `updated_at` が返る。
 
-## エージェント向け運用プロンプト例
+## 書き込み前の確認
 
-在庫追加時:
+ChatGPT Developer mode の書き込み確認画面では、少なくとも次を確認する。
+
+- `inventory.json` 全体が含まれている。
+- 分類が `生鮮`、`調味料`、`乾物`、`冷凍庫` の4つだけ。
+- 必要な商品が意図せず削除されていない。
+- `商品名` と `追加日` が欠落していない。
+- `追加日` が `YYYY-MM-DD`。
+- `数` が 0 以上。
+- `単位` だけの指定になっていない。
+- 同一分類内に同じ `商品名`、`追加日`、`単位` の重複がない。
+- `expected_updated_at` が読み取り時点の値。
+- `commit_message` が変更内容に合っている。
+
+## エージェント向けプロンプト例
+
+在庫追加:
 
 ```text
 GitHub コネクタで inventory.json を読み、現在の updated_at を expected_updated_at として保持してください。
-卵を生鮮に10個、追加日 2026-04-26 で追加してください。
-更新後の inventory.json 全体を Custom MCP の write_inventory に渡してください。
-読み取りには Custom MCP を使わず、書き込みだけ Custom MCP を使ってください。
+生鮮に卵を10個、追加日 2026-04-26、単位 個で追加してください。
+同一分類、同一商品名、同一追加日、同一単位の既存レコードがあれば数を加算してください。
+更新後の inventory.json 全体を kitchen-inventory MCP の write_inventory に渡してください。
+読み取りには MCP を使わず、書き込みだけ MCP を使ってください。
 ```
 
-料理で消費した時:
+在庫消費:
 
 ```text
 GitHub コネクタで inventory.json を読み、現在の updated_at を expected_updated_at として保持してください。
-カレーを作ったので、生鮮の玉ねぎを2個、冷凍庫の豚肉を1個分減らしてください。
+卵を2個使ったので、生鮮の該当レコードから2を差し引いてください。
 数が0になったレコードは削除してください。
-更新後の inventory.json 全体を Custom MCP の write_inventory に渡してください。
+更新後の inventory.json 全体を kitchen-inventory MCP の write_inventory に渡してください。
 ```
 
-他ツールとの混同を避ける時:
+他ファイル変更の防止:
 
 ```text
 inventory.json の読み取りは GitHub コネクタを使ってください。
@@ -195,43 +189,44 @@ inventory.json の書き込みは kitchen-inventory MCP の write_inventory だ�
 他のファイルは変更しないでください。
 ```
 
-## Vercel デプロイ後の接続
+## ローカル検証
 
-MCP エンドポイント:
+依存関係、型検査、テスト:
 
-```text
-https://<vercel-project>.vercel.app/api/mcp
+```bash
+npm install
+npm run typecheck
+npm test
 ```
 
-認証は `MCP_API_KEY` で行います。ヘッダーを設定できる場合は `Authorization: Bearer <MCP_API_KEY>` または `X-API-Key: <MCP_API_KEY>` を送ります。URL しか設定できない環境では次を使います。
+在庫 JSON の schema validation だけ確認する場合:
 
-```text
-https://<vercel-project>.vercel.app/api/mcp?api_key=<MCP_API_KEY>
+```bash
+npm run validate:inventory
 ```
 
-ChatGPT Developer mode で Custom MCP / App として追加し、利用する会話で Developer mode tool からこの MCP を選びます。
+## トラブルシュート
 
-書き込みアクションの実行前には、ChatGPT が表示する tool payload を確認します。特に次を確認してください。
+### `schema_error`
 
-- `inventory.json` 全体が含まれていること
-- 分類が `生鮮`、`調味料`、`乾物`、`冷凍庫` の4つだけであること
-- `commit_message` が意図に合っていること
-- 意図しない商品削除がないこと
+分類キー、必須項目、日付形式、負数の `数`、`単位` だけの指定、重複レコードを確認する。`schema_error` の場合、GitHub 更新処理には進まない。
 
-## よくある失敗
+### `conflict`
 
-### `expected_updated_at` が一致しない
+読み取り後に `inventory.json` が更新されている。最新の `inventory.json` を読み直し、変更内容を再適用してから再実行する。
 
-他の更新が先に入っています。最新の `inventory.json` を読み直し、変更内容を反映してから再実行します。
+### `configuration_error`
 
-### 分類名エラー
+Vercel の環境変数を確認する。`write_inventory` では `GITHUB_TOKEN`、`GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` が必要。HTTP endpoint では `MCP_API_KEY` が必要。
 
-`冷蔵庫`、`冷凍`、`乾物類` などの表記揺れは使えません。分類名は固定4分類だけです。
+### `unauthorized`
 
-### `数` が負数になる
+MCP request に API key が含まれていないか、`MCP_API_KEY` と一致していない。`Authorization` header、`X-API-Key` header、または `api_key` query を確認する。
 
-消費数が在庫数を超えています。数量を確認し、0 未満にならないように更新します。
+### `github_error`
 
-### MCP が読めない
+GitHub token の repository scope、Contents read/write 権限、対象 branch、GitHub API の応答を確認する。
 
-これは仕様通りです。MCP は読み取りツールを提供しません。GitHub コネクタで `inventory.json` を読んでください。
+### MCP で読み取れない
+
+仕様通り。MCP は `write_inventory` だけを公開している。読み取りは GitHub コネクタ、GitHub UI、またはリポジトリ参照で行う。

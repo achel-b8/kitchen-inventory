@@ -1,245 +1,10 @@
-# キッチン在庫管理リポジトリ 仕様書
+# 実装リファレンス
 
-## 目的
+この文書は、現在の `kitchen-inventory` リポジトリの実装内容を説明する。
 
-このリポジトリは、冷蔵庫を中心としたキッチン食材の在庫状態を `inventory.json` に永続化し、AI エージェントが Custom MCP 経由でその JSON を更新できるようにする。
+このリポジトリは、キッチン在庫の正本である `inventory.json` と、そのファイルだけを GitHub Contents API で更新する MCP サーバーを持つ。読み取り用 MCP ツール、Web UI、DB、在庫管理エージェント本体は含まない。
 
-このリポジトリでは在庫管理エージェント本体は実装しない。実装対象は次の2点に限定する。
-
-- 在庫データの正本となる `inventory.json`
-- `inventory.json` を GitHub 上で更新、コミットできる Vercel 向け Custom MCP
-
-管理対象リポジトリは `https://github.com/achel-b8/kitchen-inventory` とする。
-
-## スコープ
-
-### 対象
-
-- Vercel にそのまま読み込ませてデプロイできる最小構成の MCP サーバー
-- GitHub API を使った `inventory.json` の更新コミット
-- `inventory.json` のスキーマ定義と検証
-- ルート直下の `setup.md` による Vercel / ChatGPT 側設定手順
-
-### 対象外
-
-- 在庫管理エージェント本体の実装
-- ChatGPT の GitHub コネクタで代替できる `inventory.json` の検索、読み取り専用 MCP ツール
-- Web UI
-- DB や外部ストレージ
-- 複数ユーザーの権限管理
-- レシピ提案、賞味期限推定、通知機能
-
-## 前提
-
-- MCP サーバーは Vercel の Node.js Serverless Function として動作させる。
-- ChatGPT 側では Developer mode の Custom MCP / Apps 設定から接続する。
-- ChatGPT Developer mode は write tool を扱えるが、書き込みアクションは確認対象になる前提で運用する。
-- JSON の読み取りは ChatGPT の GitHub コネクタなどを使う。MCP は読み取りツールを公開しない。
-- MCP サーバー内部では GitHub の更新に必要な現在ファイル SHA を取得するが、それはツールとして外部公開しない。
-
-参考:
-
-- OpenAI: Building MCP servers for ChatGPT Apps and API integrations  
-  https://platform.openai.com/docs/mcp
-- OpenAI: ChatGPT Developer mode  
-  https://platform.openai.com/docs/developer-mode
-- OpenAI: MCP and Connectors  
-  https://platform.openai.com/docs/guides/tools-remote-mcp
-
-## 在庫 JSON 仕様
-
-ファイルパスはリポジトリ直下の `inventory.json` とする。
-
-### 基本構造
-
-```json
-{
-  "schema_version": 1,
-  "updated_at": "2026-04-26T22:00:00+09:00",
-  "inventory": {
-    "生鮮": [],
-    "調味料": [],
-    "乾物": [],
-    "冷凍庫": []
-  }
-}
-```
-
-### 大分類
-
-`inventory` 直下のキーは次の4つに固定する。
-
-- `生鮮`
-- `調味料`
-- `乾物`
-- `冷凍庫`
-
-これ以外の分類キーは許可しない。
-
-### 商品レコード
-
-各分類は商品レコードの配列を持つ。
-
-```json
-{
-  "商品名": "卵",
-  "追加日": "2026-04-26",
-  "数": 10,
-  "単位": "個"
-}
-```
-
-必須パラメーター:
-
-- `商品名`: 空文字不可の文字列
-- `追加日`: `YYYY-MM-DD` 形式の日付文字列
-
-任意パラメーター:
-
-- `数`: 0以上の数値。個数、重量、容量など、在庫管理したい量を数値で入れる。未設定の場合は数量不明または数量管理しない商品として扱う。
-- `単位`: 空文字不可の文字列。例: `個`, `g`, `ml`, `袋`, `缶`。`単位` を指定する場合は `数` も指定する。
-
-### レコード同一性
-
-同一レコードは次の組み合わせで判定する。
-
-- 大分類
-- `商品名`
-- `追加日`
-- `単位`
-
-同じ組み合わせのレコードは1件に統合する。追加入荷が同じ日に発生した場合は `数` を加算する。追加日または `単位` が異なる場合は別レコードとして残す。
-
-### 数量の扱い
-
-- `数` がある商品を消費した場合、同じ `単位` の消費数を差し引く。
-- 差し引き後の `数` が 0 になったレコードは削除する。
-- `数` がない商品を消費した場合、明示的な削除指示があるときだけ削除する。
-- `数` は負数にしない。
-- 重量、容量、袋、束などの単位は `単位` に文字列として保存する。
-
-### 日付と時刻
-
-- `追加日` は日本時間基準の `YYYY-MM-DD` とする。
-- `updated_at` は日本時間の ISO 8601 文字列とする。
-- MCP サーバーは書き込み時に `updated_at` をサーバー側で更新する。
-
-## MCP 仕様
-
-### 公開エンドポイント
-
-Vercel デプロイ後の MCP エンドポイント:
-
-```text
-https://<vercel-project>.vercel.app/api/mcp
-```
-
-プロトコルは ChatGPT Developer mode がサポートする Streaming HTTP を第一候補とする。SSE は Vercel Serverless Function との相性を考慮し、MVP では採用しない。
-
-### 公開ツール
-
-MVP ではツールを1つだけ公開する。
-
-#### `write_inventory`
-
-`inventory.json` の全体内容を検証し、GitHub リポジトリにコミットする。
-
-入力:
-
-```json
-{
-  "inventory": {
-    "schema_version": 1,
-    "updated_at": "2026-04-26T22:00:00+09:00",
-    "inventory": {
-      "生鮮": [
-        {
-          "商品名": "卵",
-          "追加日": "2026-04-26",
-          "数": 10,
-          "単位": "個"
-        }
-      ],
-      "調味料": [],
-      "乾物": [],
-      "冷凍庫": []
-    }
-  },
-  "expected_updated_at": "2026-04-26T21:30:00+09:00",
-  "commit_message": "卵を在庫に追加"
-}
-```
-
-入力項目:
-
-- `inventory`: 更新後の `inventory.json` 全体
-- `expected_updated_at`: 任意。エージェントが読み取った時点の `updated_at`
-- `commit_message`: 任意。未指定時は `Update inventory` とする
-
-処理:
-
-1. 入力 JSON をスキーマ検証する。
-2. GitHub API で現在の `inventory.json` を取得する。
-3. `expected_updated_at` が指定されている場合、現在の `updated_at` と一致するか検証する。
-4. サーバー側で `updated_at` を現在時刻に更新する。
-5. GitHub Contents API で `inventory.json` を更新コミットする。
-6. コミット SHA とファイル URL を返す。
-
-出力:
-
-```json
-{
-  "ok": true,
-  "commit_sha": "xxxxxxxx",
-  "content_url": "https://github.com/achel-b8/kitchen-inventory/blob/main/inventory.json"
-}
-```
-
-競合時の出力:
-
-```json
-{
-  "ok": false,
-  "error": "conflict",
-  "message": "inventory.json was updated after expected_updated_at"
-}
-```
-
-### 公開しないツール
-
-次のツールは MVP では実装しない。
-
-- `read_inventory`
-- `search_inventory`
-- `list_inventory`
-- `get_item`
-
-理由は、読み取りを ChatGPT の GitHub コネクタに委ね、Custom MCP の権限を GitHub 書き込み用途に絞るため。
-
-## GitHub 書き込み仕様
-
-GitHub への更新は GitHub Contents API を使う。
-
-対象:
-
-- owner: `achel-b8`
-- repo: `kitchen-inventory`
-- branch: `main`
-- path: `inventory.json`
-
-Vercel 環境変数:
-
-- `MCP_API_KEY`: MCP エンドポイントを呼び出すための長いランダム API キー
-- `GITHUB_TOKEN`: fine-grained personal access token
-- `GITHUB_OWNER`: `achel-b8`
-- `GITHUB_REPO`: `kitchen-inventory`
-- `GITHUB_BRANCH`: `main`
-
-`MCP_API_KEY` と `GITHUB_TOKEN` は secret として扱う。`GITHUB_TOKEN` は対象リポジトリの Contents read/write 権限だけを持つ fine-grained token を推奨する。
-
-## Vercel 実装方針
-
-最小構成:
+## 構成
 
 ```text
 .
@@ -249,9 +14,9 @@ Vercel 環境変数:
 │   ├── github.ts
 │   └── inventory-schema.ts
 ├── docs/
+│   ├── README.md
 │   ├── specification.md
-│   ├── usage.md
-│   └── implementation-checklist.md
+│   └── usage.md
 ├── inventory.json
 ├── package.json
 ├── setup.md
@@ -259,39 +24,213 @@ Vercel 環境変数:
 └── vercel.json
 ```
 
-採用候補:
+主要な役割:
 
-- TypeScript
-- `@modelcontextprotocol/sdk`
-- `zod`
-- Node.js 24 以上
-- Vercel Serverless Function
+- `inventory.json`: 在庫データの正本。
+- `lib/inventory-schema.ts`: 在庫 JSON の Zod schema、検証関数、日本時間 timestamp 生成。
+- `lib/github.ts`: GitHub Contents API で `inventory.json` を取得、検証、更新する処理。
+- `api/mcp.ts`: Vercel Serverless Function として動く Streamable HTTP MCP エンドポイント。
+- `setup.md`: Vercel、GitHub token、ChatGPT Developer mode の接続手順。
 
-## セキュリティ方針
+## 実行環境
 
-MCP サーバーは GitHub 書き込み権限を持つため、公開 URL と API キーの扱いに注意する。
+`package.json` は Node.js `24.x` を指定している。主な依存関係は次の通り。
 
-MCP エンドポイントは `MCP_API_KEY` による簡易認証を必須にする。API キーは `Authorization: Bearer <MCP_API_KEY>`、`X-API-Key: <MCP_API_KEY>`、または URL しか設定できないクライアント向けの `?api_key=<MCP_API_KEY>` で渡す。`MCP_API_KEY` が未設定の場合は公開状態で動かさず、設定エラーを返す。
+- `@modelcontextprotocol/sdk`: MCP server と Streamable HTTP transport。
+- `zod`: 入力と在庫 JSON の schema validation。
+- `@vercel/node`: Vercel API Route 型。
+- `typescript`, `vitest`: 型検査とテスト。
 
-必須ルール:
+利用できる npm scripts:
 
-- GitHub token をリポジトリにコミットしない。
-- Vercel 環境変数にだけ secret を保存する。
-- token は対象リポジトリ限定、Contents read/write 限定にする。
-- `MCP_API_KEY` は長いランダム値にし、URL で渡す場合は共有範囲を最小にする。
-- ツール説明に secret や token を含めない。
-- 書き込みツールは ChatGPT 側で確認してから実行する。
-- `inventory.json` 以外のファイルを書き換えない。
+```bash
+npm run typecheck
+npm test
+npm run validate:inventory
+```
 
-## 受け入れ条件
+## 在庫 JSON
 
-- `inventory.json` が仕様通りの初期構造で存在する。
-- Vercel がリポジトリを読み込み、ビルドできる。
-- `/api/mcp` が MCP サーバーとして応答する。
-- API キーなしの `/api/mcp` は拒否される。
-- ChatGPT Developer mode から MCP を追加できる。
-- `write_inventory` だけが公開される。
-- `write_inventory` に正しい JSON を渡すと `inventory.json` が GitHub 上で更新される。
-- 不正な分類、欠落した必須項目、負数の `数` は拒否される。
-- `expected_updated_at` 不一致時は上書きせず競合エラーを返す。
-- `setup.md` に Vercel と ChatGPT の設定手順が記載されている。
+在庫ファイルはリポジトリ直下の `inventory.json` に固定されている。現在のファイルは実在庫データを含む運用中の JSON であり、空の初期テンプレートではない。
+
+基本構造:
+
+```json
+{
+  "schema_version": 1,
+  "updated_at": "2026-04-27T00:20:57+09:00",
+  "inventory": {
+    "生鮮": [],
+    "調味料": [],
+    "乾物": [],
+    "冷凍庫": []
+  }
+}
+```
+
+`inventory` 直下の分類は次の4つに固定されている。
+
+- `生鮮`
+- `調味料`
+- `乾物`
+- `冷凍庫`
+
+商品レコード:
+
+```json
+{
+  "商品名": "和牛切り落とし",
+  "追加日": "2026-04-26",
+  "数": 80,
+  "単位": "g"
+}
+```
+
+検証ルール:
+
+- `schema_version` は `1`。
+- `updated_at` は日本時間の ISO 8601 文字列。例: `2026-04-27T00:20:57+09:00`。
+- `商品名` は必須の非空文字列。
+- `追加日` は実在する日付の `YYYY-MM-DD`。
+- `数` は任意の 0 以上の有限数値。
+- `単位` は任意の非空文字列。
+- `単位` がある場合は `数` も必須。
+- 分類キーは固定4分類のみ。欠落や追加キーは拒否される。
+- 同一分類内で `商品名`、`追加日`、`単位` が同じレコードの重複は拒否される。
+
+## MCP エンドポイント
+
+Vercel 上のエンドポイント:
+
+```text
+https://<vercel-project>.vercel.app/api/mcp
+```
+
+実装は `StreamableHTTPServerTransport` を使う。受け付ける HTTP method は `POST` と CORS preflight の `OPTIONS`。それ以外は JSON-RPC error を返す。
+
+MCP サーバー名:
+
+```text
+kitchen-inventory
+```
+
+公開ツールは `write_inventory` のみ。`read_inventory`、`search_inventory`、`list_inventory`、`get_item` は登録していない。読み取りは GitHub コネクタや GitHub UI に委ね、MCP は書き込みだけを担当する。
+
+## 認証
+
+`/api/mcp` は `MCP_API_KEY` による認証が必須。次のいずれかで API key を渡せる。
+
+```text
+Authorization: Bearer <MCP_API_KEY>
+X-API-Key: <MCP_API_KEY>
+https://<vercel-project>.vercel.app/api/mcp?api_key=<MCP_API_KEY>
+```
+
+`MCP_API_KEY` が未設定の場合は configuration error、API key がないか一致しない場合は unauthorized を返す。比較には hash 化した値の `timingSafeEqual` を使う。
+
+## `write_inventory`
+
+`write_inventory` は、更新後の `inventory.json` 全体を受け取り、検証後に GitHub 上の `inventory.json` をコミットする。
+
+入力:
+
+```json
+{
+  "inventory": {
+    "schema_version": 1,
+    "updated_at": "2026-04-27T00:20:57+09:00",
+    "inventory": {
+      "生鮮": [],
+      "調味料": [],
+      "乾物": [],
+      "冷凍庫": []
+    }
+  },
+  "expected_updated_at": "2026-04-27T00:20:57+09:00",
+  "commit_message": "在庫を更新"
+}
+```
+
+入力項目:
+
+- `inventory`: 更新後の `inventory.json` 全体。必須。
+- `expected_updated_at`: 読み取り時点の `updated_at`。任意。指定時は競合検出に使う。
+- `commit_message`: 任意。未指定または空文字の場合は `Update inventory`。
+
+処理順:
+
+1. `inventory`、`expected_updated_at`、`commit_message` を検証する。
+2. スキーマ違反があれば GitHub API へ進まず `schema_error` を返す。
+3. `GITHUB_TOKEN`、`GITHUB_OWNER`、`GITHUB_REPO`、`GITHUB_BRANCH` を環境変数から読む。
+4. GitHub Contents API で現在の `inventory.json` と file SHA を取得する。
+5. 現在の `inventory.json` も schema validation に通す。
+6. `expected_updated_at` が指定されていれば現在値と比較する。
+7. 不一致なら更新せず `conflict` を返す。
+8. `updated_at` をサーバー側の現在時刻、JST ISO 8601 形式に差し替える。
+9. 取得済み SHA を指定して `inventory.json` を GitHub Contents API で更新する。
+10. 成功時は commit SHA、GitHub URL、更新後 timestamp を返す。
+
+成功時の tool result:
+
+```json
+{
+  "ok": true,
+  "commit_sha": "xxxxxxxx",
+  "content_url": "https://github.com/achel-b8/kitchen-inventory/blob/main/inventory.json",
+  "updated_at": "2026-04-27T00:30:00+09:00"
+}
+```
+
+失敗時の tool result:
+
+```json
+{
+  "ok": false,
+  "error": "conflict",
+  "message": "inventory.json was updated after expected_updated_at"
+}
+```
+
+`write_inventory` の戻り値は MCP content の `text` として JSON 文字列で返る。
+
+## GitHub 更新
+
+更新対象はコード上で `inventory.json` に固定されている。クライアントから任意 path を指定する入力はない。
+
+必要な環境変数:
+
+```text
+GITHUB_TOKEN=<fine-grained personal access token>
+GITHUB_OWNER=achel-b8
+GITHUB_REPO=kitchen-inventory
+GITHUB_BRANCH=main
+```
+
+GitHub token は fine-grained personal access token を使い、対象 repository を `achel-b8/kitchen-inventory` のみに限定し、Repository permissions は `Contents: Read and write` のみにする。
+
+## エラー
+
+Tool result のエラー:
+
+- `schema_error`: 入力または在庫 JSON が schema に合わない。
+- `configuration_error`: GitHub 更新に必要な環境変数が不足している。
+- `conflict`: `expected_updated_at` と現在の `updated_at` が一致しない。
+- `github_error`: GitHub API の取得または更新で失敗した。
+- `internal_error`: 予期しない更新エラー。
+
+HTTP endpoint の認証・method エラーは JSON-RPC error で返る。
+
+- API key 不一致: HTTP 401、`data.error` は `unauthorized`。
+- `MCP_API_KEY` 未設定: HTTP 500、`data.error` は `configuration_error`。
+- `POST` / `OPTIONS` 以外: HTTP 405。
+
+Secret 値や request header はエラーメッセージに含めない。
+
+## セキュリティ
+
+- MCP endpoint は API key 認証を必須にしている。
+- GitHub token は実行時環境変数からだけ読む。
+- `inventory.json` 以外のファイルを更新する入力を受け付けない。
+- Tool description と tool result には secret を含めない。
+- `.env` と `.env.*` は `.gitignore` 対象。`.env.example` だけをリポジトリに置く。
+- URL query で API key を渡す場合は、共有範囲とログ露出を最小にする。
